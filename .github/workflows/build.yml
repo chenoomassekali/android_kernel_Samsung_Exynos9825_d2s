@@ -48,13 +48,16 @@ jobs:
           export ANDROID_MAJOR_VERSION=q
           make exynos9820-d2s_defconfig
           make -j$(nproc) KCFLAGS="-w -Wno-error" 2>&1 || true
-          ls arch/arm64/boot/ && echo "BUILD SUCCESS" || echo "BUILD FAILED"
+          echo "=== Boot files ===" 
+          find . -name "Image*" -o -name "zImage*" 2>/dev/null
+          ls arch/arm64/boot/ 2>/dev/null || echo "No boot dir"
 
       - name: Package with AnyKernel3
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel
-          cp arch/arm64/boot/Image.gz AnyKernel/ 2>/dev/null || \
-          cp arch/arm64/boot/Image AnyKernel/ 2>/dev/null
+          find . -name "Image*" ! -path "./AnyKernel/*" -exec cp {} AnyKernel/ \; 2>/dev/null || true
+          find . -name "zImage*" ! -path "./AnyKernel/*" -exec cp {} AnyKernel/ \; 2>/dev/null || true
+          ls AnyKernel/
           cd AnyKernel
           zip -r9 ../kernel-rt2800-d2s.zip * -x .git README.md
 
