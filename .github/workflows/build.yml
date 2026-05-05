@@ -33,7 +33,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 wget unzip
+          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 wget
 
       - name: Download Original boot.img
         run: |
@@ -51,111 +51,136 @@ jobs:
           echo "CONFIG_RT2800USB_UNKNOWN=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
 
       - name: Build Kernel
+        id: build
         run: |
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export ANDROID_MAJOR_VERSION=q
           make exynos9820-d2s_defconfig
           make -j$(nproc) KCFLAGS="-w -Wno-error" 2>&1 || true
-          KERNEL=$(find ./out -name "Image.gz" 2>/dev/null | head -1)
+          KERNEL=$(find . -name "Image.gz" | grep -v ".git" | head -1)
           echo "Kernel: $KERNEL"
           ls -lh "$KERNEL"
+          echo "kernel_path=$KERNEL" >> $GITHUB_OUTPUT
 
-      - name: Unpack and Repack boot.img
+      - name: Unpack and Repack boot.img (Pure Python)
         run: |
-          KERNEL=$(find ./out -name "Image.gz" 2>/dev/null | head -1)
-          echo "Using kernel: $KERNEL"
-          python3 << PYEOF
+          python3 << 'EOF'
           import struct, os, sys
 
-          def pad_to_page(data, pagesize):
+          def read_file(path):
+              with open(path, 'rb') as f:
+                  return f.read()
+
+          def write_file(path, data):
+              with open(path, 'wb') as f:
+                  f.write(data)
+
+          def align(data, pagesize):
               r = len(data) % pagesize
               if r == 0:
                   return data
               return data + b'\x00' * (pagesize - r)
 
-          # Read original boot.img
-          with open('original-boot.img', 'rb') as f:
-              boot = f.read()
+          # ── Parse original boot.img ──────────────────────────────────────
+          boot = read_file('original-boot.img')
 
-          # Parse header
-          magic = boot[0:8]
-          print(f"Magic: {magic}")
-          assert magic == b'ANDROID!', "Not valid Android boot image!"
+          assert boot[:8] == b'ANDROID!', "Not an Android boot image!"
 
           (kernel_size, kernel_addr,
            ramdisk_size, ramdisk_addr,
            second_size, second_addr,
            tags_addr, page_size) = struct.unpack_from('<8I', boot, 8)
 
-          os_version = struct.unpack_from('<I', boot, 40)[0]
-          name = boot[48:64].rstrip(b'\x00').decode('utf-8', errors='replace')
-          cmdline = boot[64:576].rstrip(b'\x00').decode('utf-8', errors='replace')
-          extra_cmdline = boot[608:1120].rstrip(b'\x00').decode('utf-8', errors='replace')
+          os_version_patch = struct.unpack_from('<I', boot, 40)[0]
+          name    = boot[32:48]          # product name (16 bytes) — offset 32
+          # NOTE: header layout (v0):
+          #   0   magic[8]
+          #   8   kernel_size
+          #  12   kernel_addr
+          #  16   ramdisk_size
+          #  20   ramdisk_addr
+          #  24   second_size
+          #  28   second_addr
+          #  32   tags_addr   ← actually this is tags_addr in v0!
+          # Let's re-parse carefully per AOSP spec:
+          (kernel_size, kernel_addr,
+           ramdisk_size, ramdisk_addr,
+           second_size,  second_addr,
+           tags_addr,    page_size) = struct.unpack_from('<8I', boot, 8)
 
-          print(f"page_size: {page_size}")
-          print(f"kernel_size: {kernel_size}")
-          print(f"ramdisk_size: {ramdisk_size}")
-          print(f"kernel_addr: 0x{kernel_addr:08x}")
-          print(f"ramdisk_addr: 0x{ramdisk_addr:08x}")
-          print(f"tags_addr: 0x{tags_addr:08x}")
-          print(f"cmdline: {cmdline}")
-          print(f"name: {name}")
+          # name is at offset 48 (16 bytes), cmdline at 64 (512 bytes)
+          name    = boot[48:64]
+          cmdline = boot[64:576]
+          id_data = boot[576:608]  # sha1 id (32 bytes)
+          # extra_cmdline at 608 (1024 bytes) — v0 doesn't have it but safe to keep zeros
 
-          # Calculate offsets
-          header_pages = 1
-          kernel_pages = (kernel_size + page_size - 1) // page_size
-          ramdisk_offset = (header_pages + kernel_pages) * page_size
-          ramdisk_data = boot[ramdisk_offset:ramdisk_offset + ramdisk_size]
+          print(f"page_size   = {page_size}")
+          print(f"kernel_size = {kernel_size}")
+          print(f"ramdisk_size= {ramdisk_size}")
+          print(f"second_size = {second_size}")
+          print(f"kernel_addr = 0x{kernel_addr:08x}")
+          print(f"ramdisk_addr= 0x{ramdisk_addr:08x}")
+          print(f"tags_addr   = 0x{tags_addr:08x}")
+          print(f"cmdline     = {cmdline.rstrip(b'chr(0)').decode('utf-8', errors='replace')}")
+
+          # ── Locate sections ──────────────────────────────────────────────
+          def ceil_page(n, ps): return ((n + ps - 1) // ps) * ps
+
+          off_kernel   = page_size                                          # page 1
+          off_ramdisk  = off_kernel  + ceil_page(kernel_size,  page_size)
+          off_second   = off_ramdisk + ceil_page(ramdisk_size, page_size)
+
+          ramdisk_data = boot[off_ramdisk : off_ramdisk + ramdisk_size]
+          second_data  = boot[off_second  : off_second  + second_size]  if second_size else b''
 
           print(f"Extracted ramdisk: {len(ramdisk_data)} bytes")
 
-          # Read new kernel
-          kernel_path = os.environ.get('KERNEL', '')
-          print(f"New kernel path: {kernel_path}")
-          with open(kernel_path, 'rb') as f:
-              new_kernel = f.read()
-          print(f"New kernel size: {len(new_kernel)} bytes")
+          # ── New kernel ───────────────────────────────────────────────────
+          kernel_path = os.environ.get('KERNEL_PATH', '')
+          assert kernel_path and os.path.exists(kernel_path), f"Kernel not found: {kernel_path}"
+          kernel_data = read_file(kernel_path)
+          print(f"New kernel: {len(kernel_data)} bytes from {kernel_path}")
 
-          # Build new header
-          new_kernel_size = len(new_kernel)
-          new_ramdisk_size = len(ramdisk_data)
+          # ── Build new header (512 bytes, then padded to page_size) ───────
+          hdr  = b'ANDROID!'
+          hdr += struct.pack('<8I',
+                             len(kernel_data),  kernel_addr,
+                             len(ramdisk_data), ramdisk_addr,
+                             len(second_data),  second_addr,
+                             tags_addr,         page_size)
+          hdr += struct.pack('<I', os_version_patch)  # os_version (4 bytes)
+          hdr += struct.pack('<I', 0)                  # reserved (4 bytes) — total 48
+          hdr += name                                  # 16 bytes  → total 64
+          hdr += cmdline                               # 512 bytes → total 576
+          hdr += id_data                               # 32 bytes  → total 608
+          hdr += b'\x00' * (page_size - len(hdr) % page_size if len(hdr) % page_size else 0)
 
-          # Header is page_size bytes
-          hdr = bytearray(page_size)
-          struct.pack_into('8s', hdr, 0, b'ANDROID!')
-          struct.pack_into('<I', hdr, 8, new_kernel_size)
-          struct.pack_into('<I', hdr, 12, kernel_addr)
-          struct.pack_into('<I', hdr, 16, new_ramdisk_size)
-          struct.pack_into('<I', hdr, 20, ramdisk_addr)
-          struct.pack_into('<I', hdr, 24, second_size)
-          struct.pack_into('<I', hdr, 28, second_addr)
-          struct.pack_into('<I', hdr, 32, tags_addr)
-          struct.pack_into('<I', hdr, 36, page_size)
-          struct.pack_into('<I', hdr, 40, os_version)
-          struct.pack_into('16s', hdr, 48, name.encode().ljust(16, b'\x00'))
-          struct.pack_into('512s', hdr, 64, cmdline.encode().ljust(512, b'\x00'))
-          struct.pack_into('512s', hdr, 608, extra_cmdline.encode().ljust(512, b'\x00'))
+          # ── Assemble ─────────────────────────────────────────────────────
+          output  = hdr
+          output += align(kernel_data,  page_size)
+          output += align(ramdisk_data, page_size)
+          if second_data:
+              output += align(second_data, page_size)
 
-          # Combine all parts
-          output = bytes(hdr)
-          output += pad_to_page(new_kernel, page_size)
-          output += pad_to_page(ramdisk_data, page_size)
+          write_file('boot-rt2800-d2s.img', output)
+          print(f"boot.img written: {len(output)} bytes")
+          EOF
 
-          with open('boot-rt2800-d2s.img', 'wb') as f:
-              f.write(output)
-
-          print(f"boot.img created successfully! Size: {len(output)} bytes")
-          PYEOF
-          ls -lh boot-rt2800-d2s.img
         env:
-          KERNEL: ${{ env.KERNEL_PATH }}
+          KERNEL_PATH: ${{ steps.build.outputs.kernel_path }}
 
-      - name: Set Kernel Path
-        id: kernel
+      - name: Verify boot.img
         run: |
-          KERNEL=$(find ./out -name "Image.gz" 2>/dev/null | head -1)
-          echo "KERNEL_PATH=$KERNEL" >> $GITHUB_ENV
+          ls -lh boot-rt2800-d2s.img
+          python3 -c "
+          import struct
+          with open('boot-rt2800-d2s.img','rb') as f: h=f.read(64)
+          assert h[:8]==b'ANDROID!', 'Bad magic!'
+          ks,ka,rs,ra,ss,sa,ta,ps = struct.unpack_from('<8I',h,8)
+          print(f'kernel_size={ks}, ramdisk_size={rs}, page_size={ps}')
+          print('boot.img looks valid!')
+          "
 
       - name: Upload boot.img
         uses: actions/upload-artifact@v4
