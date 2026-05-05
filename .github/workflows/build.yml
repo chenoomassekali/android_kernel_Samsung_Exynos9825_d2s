@@ -33,7 +33,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y build-essential bc flex bison libssl-dev libelf-dev python3 wget clang lld llvm binutils-aarch64-linux-gnu
+          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 wget clang lld llvm binutils-aarch64-linux-gnu
 
       - name: Download Nethunter boot.img
         run: |
@@ -65,6 +65,7 @@ jobs:
           export OBJDUMP=llvm-objdump
           export STRIP=llvm-strip
           export ANDROID_MAJOR_VERSION=q
+          make mrproper 2>/dev/null || true
           make exynos9820-d2s_defconfig
           scripts/config --disable CONFIG_CC_STACKPROTECTOR_STRONG
           scripts/config --enable CONFIG_CC_STACKPROTECTOR_NONE
