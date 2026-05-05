@@ -1,4 +1,4 @@
-name: Build Kernel
+name: Build RT2800 Magisk Module
 
 on:
   workflow_dispatch:
@@ -33,157 +33,120 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 wget
+          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 wget clang lld llvm zip
 
-      - name: Download Nethunter boot.img
+      - name: Add RT2800 Config as Module
         run: |
-          wget -q https://github.com/chenoomassekali/android_kernel_Samsung_Exynos9825_d2s/releases/download/v2.0/boot-current.img -O nethunter-boot.img
-          ls -lh nethunter-boot.img
-
-      - name: Add RT2800 Config
-        run: |
+          # Tambah config RT2800 sebagai module (=m bukan =y)
           echo "CONFIG_WLAN_VENDOR_RALINK=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
-          echo "CONFIG_RT2X00=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
-          echo "CONFIG_RT2X00USB=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
-          echo "CONFIG_RT2800USB=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
+          echo "CONFIG_RT2X00=m" >> arch/arm64/configs/exynos9820-d2s_defconfig
+          echo "CONFIG_RT2X00USB=m" >> arch/arm64/configs/exynos9820-d2s_defconfig
+          echo "CONFIG_RT2800USB=m" >> arch/arm64/configs/exynos9820-d2s_defconfig
           echo "CONFIG_RT2800USB_RT2770=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
           echo "CONFIG_RT2800USB_RT3070=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
           echo "CONFIG_RT2800USB_UNKNOWN=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
+          echo "CONFIG_RT2800LIB=m" >> arch/arm64/configs/exynos9820-d2s_defconfig
+          echo "CONFIG_RT2800MMIO=m" >> arch/arm64/configs/exynos9820-d2s_defconfig
 
-      - name: Build Kernel with DTB (Exynos 9825)
-        id: build
+      - name: Build Kernel and Modules
         run: |
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export ANDROID_MAJOR_VERSION=q
           make exynos9820-d2s_defconfig
+          # Build kernel dulu (diperlukan untuk build modules)
+          make -j$(nproc) KCFLAGS="-w -Wno-error" 2>&1 || true
+          # Build modules
+          make -j$(nproc) modules KCFLAGS="-w -Wno-error" 2>&1 || true
+          # Cari file .ko yang dihasilkan
+          echo "=== RT2800 modules found ==="
+          find . -name "rt2*.ko" 2>/dev/null
+          find . -name "mac80211.ko" 2>/dev/null
+          find . -name "cfg80211.ko" 2>/dev/null
 
-          # Build kernel Image (mentah) dan Device Tree Blobs (DTB)
-          make -j$(nproc) Image dtbs KCFLAGS="-w -Wno-error"
-
-          # Cari file DTB yang cocok untuk d2s (exynos9825)
-          DTB_FILE=$(find arch/arm64/boot/dts -name "*exynos9825*d2s*.dtb" 2>/dev/null | head -1)
-          if [ -z "$DTB_FILE" ]; then
-            # Fallback: cari semua dtb dan ambil yang mengandung "exynos9825"
-            DTB_FILE=$(find arch/arm64/boot/dts -name "*exynos9825*.dtb" 2>/dev/null | head -1)
-          fi
-          if [ -z "$DTB_FILE" ]; then
-            # Fallback terakhir: cari dtb yang mengandung "d2s"
-            DTB_FILE=$(find arch/arm64/boot/dts -name "*d2s*.dtb" 2>/dev/null | head -1)
-          fi
-
-          if [ -z "$DTB_FILE" ]; then
-            echo "ERROR: DTB untuk Exynos 9825 (d2s) tidak ditemukan!"
-            echo "Daftar file .dtb yang tersedia:"
-            find arch/arm64/boot/dts -name "*.dtb" 2>/dev/null || echo "Tidak ada file .dtb ditemukan."
-            exit 1
-          fi
-
-          echo "DTB ditemukan: $DTB_FILE"
-          ls -lh "$DTB_FILE"
-
-          # Gabungkan Image (mentah) + DTB
-          cat arch/arm64/boot/Image "$DTB_FILE" > arch/arm64/boot/Image-dtb
-          KERNEL=arch/arm64/boot/Image-dtb
-          ls -lh "$KERNEL"
-          echo "kernel_path=$KERNEL" >> $GITHUB_OUTPUT
-
-      - name: Unpack and Repack boot.img (Pure Python)
+      - name: Create Magisk Module
         run: |
-          python3 << 'EOF'
-          import struct, os, sys
+          KVER="4.14.356-FrEeRuNnErKeRnEl-v3.7-R3+"
+          MODULE_DIR="magisk-rt2800"
+          mkdir -p $MODULE_DIR/system/lib/modules/$KVER
+          mkdir -p $MODULE_DIR/META-INF/com/google/android
 
-          def read_file(path):
-              with open(path, 'rb') as f:
-                  return f.read()
+          # Copy semua .ko yang diperlukan
+          for ko in rt2x00lib rt2x00usb rt2800lib rt2800usb mac80211 cfg80211; do
+            FILE=$(find . -name "${ko}.ko" | head -1)
+            if [ -n "$FILE" ]; then
+              cp "$FILE" $MODULE_DIR/system/lib/modules/$KVER/
+              echo "Copied: $ko.ko"
+            else
+              echo "WARNING: $ko.ko not found"
+            fi
+          done
 
-          def write_file(path, data):
-              with open(path, 'wb') as f:
-                  f.write(data)
+          ls -lh $MODULE_DIR/system/lib/modules/$KVER/
 
-          def align(data, pagesize):
-              r = len(data) % pagesize
-              if r == 0:
-                  return data
-              return data + b'\x00' * (pagesize - r)
+          # Buat module.prop
+          cat > $MODULE_DIR/module.prop << 'PROP'
+          id=rt2800usb
+          name=RT2800USB WiFi Driver
+          version=v1.0
+          versionCode=1
+          author=chenoomassekali
+          description=RT2800USB driver untuk adapter WiFi Ralink/MediaTek
+          PROP
 
-          # Parse nethunter boot.img
-          boot = read_file('nethunter-boot.img')
-          assert boot[:8] == b'ANDROID!', "Not an Android boot image!"
+          # Buat customize.sh untuk load modules otomatis
+          cat > $MODULE_DIR/customize.sh << 'SH'
+          #!/system/bin/sh
+          KVER=$(uname -r)
+          MODPATH="/system/lib/modules/$KVER"
+          ui_print "- Installing RT2800USB modules for kernel $KVER"
+          ui_print "- Module path: $MODPATH"
+          SH
 
-          (kernel_size, kernel_addr,
-           ramdisk_size, ramdisk_addr,
-           second_size, second_addr,
-           tags_addr, page_size) = struct.unpack_from('<8I', boot, 8)
+          # Buat service.sh untuk insmod saat boot
+          mkdir -p $MODULE_DIR
+          cat > $MODULE_DIR/service.sh << 'SH'
+          #!/system/bin/sh
+          KVER=$(uname -r)
+          MODPATH="/data/adb/modules/rt2800usb/system/lib/modules/$KVER"
 
-          os_version_patch = struct.unpack_from('<I', boot, 40)[0]
-          name    = boot[48:64]
-          cmdline = boot[64:576]
-          id_data = boot[576:608]
+          sleep 10
 
-          print(f"page_size    = {page_size}")
-          print(f"kernel_size  = {kernel_size}")
-          print(f"ramdisk_size = {ramdisk_size}")
+          insmod $MODPATH/cfg80211.ko 2>/dev/null
+          insmod $MODPATH/mac80211.ko 2>/dev/null
+          insmod $MODPATH/rt2x00lib.ko 2>/dev/null
+          insmod $MODPATH/rt2x00usb.ko 2>/dev/null
+          insmod $MODPATH/rt2800lib.ko 2>/dev/null
+          insmod $MODPATH/rt2800usb.ko 2>/dev/null
 
-          def ceil_page(n, ps):
-              return ((n + ps - 1) // ps) * ps
+          echo "RT2800USB modules loaded" >> /data/local/tmp/rt2800.log
+          lsmod | grep rt28 >> /data/local/tmp/rt2800.log
+          SH
 
-          off_kernel  = page_size
-          off_ramdisk = off_kernel  + ceil_page(kernel_size,  page_size)
-          off_second  = off_ramdisk + ceil_page(ramdisk_size, page_size)
+          chmod +x $MODULE_DIR/service.sh
+          chmod +x $MODULE_DIR/customize.sh
 
-          ramdisk_data = boot[off_ramdisk : off_ramdisk + ramdisk_size]
-          second_data  = boot[off_second  : off_second  + second_size] if second_size else b''
+          # Buat update-binary
+          cat > $MODULE_DIR/META-INF/com/google/android/update-binary << 'UB'
+          #!/sbin/sh
+          SKIPUNZIP=1
+          unzip -o "$ZIPFILE" 'system/*' -d "$MODPATH"
+          unzip -o "$ZIPFILE" 'service.sh' -d "$MODPATH"
+          unzip -o "$ZIPFILE" 'customize.sh' -d "$MODPATH"
+          set_perm_recursive "$MODPATH" root root 0755 0644
+          UB
 
-          # Kernel baru (Image-dtb)
-          kernel_path = os.environ.get('KERNEL_PATH', '')
-          assert kernel_path and os.path.exists(kernel_path), f"Kernel not found: {kernel_path}"
-          kernel_data = read_file(kernel_path)
-          print(f"New kernel size: {len(kernel_data)} bytes")
+          # Buat updater-script
+          echo "#MAGISK" > $MODULE_DIR/META-INF/com/google/android/updater-script
 
-          # Bangun header baru
-          hdr  = b'ANDROID!'
-          hdr += struct.pack('<8I',
-                             len(kernel_data),  kernel_addr,
-                             len(ramdisk_data), ramdisk_addr,
-                             len(second_data),  second_addr,
-                             tags_addr,         page_size)
-          hdr += struct.pack('<I', os_version_patch)
-          hdr += struct.pack('<I', 0)
-          hdr += name
-          hdr += cmdline
-          hdr += id_data
-          pad_len = page_size - (len(hdr) % page_size)
-          if pad_len != page_size:
-              hdr += b'\x00' * pad_len
+          # Zip semua jadi Magisk module
+          cd $MODULE_DIR
+          zip -r ../rt2800usb-magisk.zip .
+          cd ..
+          ls -lh rt2800usb-magisk.zip
 
-          output  = hdr
-          output += align(kernel_data,  page_size)
-          output += align(ramdisk_data, page_size)
-          if second_data:
-              output += align(second_data, page_size)
-
-          write_file('boot-rt2800-d2s.img', output)
-          print(f"boot-rt2800-d2s.img written: {len(output)} bytes")
-          EOF
-
-        env:
-          KERNEL_PATH: ${{ steps.build.outputs.kernel_path }}
-
-      - name: Verify boot.img
-        run: |
-          ls -lh boot-rt2800-d2s.img
-          python3 -c "
-          import struct
-          with open('boot-rt2800-d2s.img','rb') as f: h=f.read(64)
-          assert h[:8]==b'ANDROID!', 'Bad magic!'
-          ks,ka,rs,ra,ss,sa,ta,ps = struct.unpack_from('<8I',h,8)
-          print(f'kernel_size={ks}, ramdisk_size={rs}, page_size={ps}')
-          print('boot.img looks valid!')
-          "
-
-      - name: Upload boot.img
+      - name: Upload Magisk Module
         uses: actions/upload-artifact@v4
         with:
-          name: boot-rt2800-d2s
-          path: boot-rt2800-d2s.img
+          name: rt2800usb-magisk-module
+          path: rt2800usb-magisk.zip
