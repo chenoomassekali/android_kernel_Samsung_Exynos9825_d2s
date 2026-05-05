@@ -65,7 +65,6 @@ jobs:
           export OBJDUMP=llvm-objdump
           export STRIP=llvm-strip
           export ANDROID_MAJOR_VERSION=q
-          # Bersihkan out directory
           rm -rf out
           mkdir -p out
           make O=out exynos9820-d2s_defconfig
@@ -88,7 +87,7 @@ jobs:
               with open(path, 'wb') as f:
                   f.write(data)
 
-  f       def align(data, pagesize):
+          def align(data, pagesize):
               r = len(data) % pagesize
               if r == 0:
                   return data
