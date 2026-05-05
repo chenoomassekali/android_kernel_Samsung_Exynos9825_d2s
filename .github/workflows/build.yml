@@ -34,7 +34,13 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 python3-pip wget unzip
-          pip install --break-system-packages mkbootimg
+          pip3 install mkbootimg 2>/dev/null || pip install mkbootimg 2>/dev/null || true
+          git clone --depth=1 https://github.com/osm0sis/mkbootimg tools-mkbootimg
+          sudo cp tools-mkbootimg/mkbootimg /usr/local/bin/
+          sudo cp tools-mkbootimg/unpackbootimg /usr/local/bin/ 2>/dev/null || true
+          sudo chmod +x /usr/local/bin/mkbootimg /usr/local/bin/unpackbootimg 2>/dev/null || true
+          mkbootimg --version 2>/dev/null || echo "mkbootimg ready"
+          unpackbootimg --version 2>/dev/null || echo "unpackbootimg ready"
 
       - name: Download Original boot.img
         run: |
@@ -66,9 +72,7 @@ jobs:
         run: |
           mkdir -p bootimg-out
           cd bootimg-out
-          unpackbootimg -i ../original-boot.img || \
-          python3 -m mkbootimg unpack ../original-boot.img 2>/dev/null || \
-          unpack_bootimg --boot_img ../original-boot.img --out . 2>/dev/null
+          unpackbootimg -i ../original-boot.img
           ls -la
           echo "=== CMDLINE ===" && cat *cmdline* 2>/dev/null || true
           echo "=== BASE ===" && cat *base* 2>/dev/null || true
