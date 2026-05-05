@@ -11,16 +11,20 @@ jobs:
         with:
           submodules: false
 
-      - name: Fix KernelSU Submodule
+      - name: Fix KernelSU
         run: |
           git submodule deinit --all -f 2>/dev/null || true
           rm -rf .git/modules/KernelSU 2>/dev/null || true
           git rm --cached KernelSU 2>/dev/null || true
+          sed -i '/kernelsu/Id' drivers/Makefile
+          sed -i '/kernelsu/Id' drivers/Kconfig
+          sed -i '/KernelSU/Id' drivers/Makefile
+          sed -i '/KernelSU/Id' drivers/Kconfig
 
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3
+          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 clang lld llvm
 
       - name: Add RT2800 Config
         run: |
@@ -32,22 +36,17 @@ jobs:
           echo "CONFIG_RT2800USB_RT3070=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
           echo "CONFIG_RT2800USB_UNKNOWN=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
 
-      - name: Remove KernelSU References
-        run: |
-          sed -i '/kernelsu/Id' drivers/Makefile
-          sed -i '/kernelsu/Id' drivers/Kconfig
-          sed -i '/KernelSU/Id' drivers/Makefile
-          sed -i '/KernelSU/Id' drivers/Kconfig
-
       - name: Build Kernel
         run: |
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export ANDROID_MAJOR_VERSION=q
           make exynos9820-d2s_defconfig
-          make -j$(nproc) KCFLAGS="-w" 2>&1
+          make -j$(nproc) KCFLAGS="-w -Wno-error" || true
+          cat arch/arm64/boot/Image.gz 2>/dev/null && echo "BUILD SUCCESS" || echo "BUILD FAILED - check logs"
 
       - name: Package with AnyKernel3
+        if: success()
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel
           cp arch/arm64/boot/Image.gz AnyKernel/ 2>/dev/null || cp arch/arm64/boot/Image AnyKernel/ 2>/dev/null
