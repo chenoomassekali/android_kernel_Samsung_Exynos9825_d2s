@@ -48,18 +48,25 @@ jobs:
           export ANDROID_MAJOR_VERSION=q
           make exynos9820-d2s_defconfig
           make -j$(nproc) KCFLAGS="-w -Wno-error" 2>&1 || true
-          echo "=== Boot files ===" 
-          find . -name "Image*" -o -name "zImage*" 2>/dev/null
-          ls arch/arm64/boot/ 2>/dev/null || echo "No boot dir"
+          echo "=== Cek semua file boot ==="
+          find arch/arm64/boot/ -type f 2>/dev/null
+          find . -name "Image" -o -name "Image.gz" -o -name "Image.lz4" 2>/dev/null | grep -v "\.git"
 
       - name: Package with AnyKernel3
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel
-          find . -name "Image*" ! -path "./AnyKernel/*" -exec cp {} AnyKernel/ \; 2>/dev/null || true
-          find . -name "zImage*" ! -path "./AnyKernel/*" -exec cp {} AnyKernel/ \; 2>/dev/null || true
-          ls AnyKernel/
+          # Copy semua kemungkinan file kernel
+          cp arch/arm64/boot/Image AnyKernel/ 2>/dev/null && echo "Image copied" || echo "Image not found"
+          cp arch/arm64/boot/Image.gz AnyKernel/ 2>/dev/null && echo "Image.gz copied" || echo "Image.gz not found"
+          cp arch/arm64/boot/Image.lz4 AnyKernel/ 2>/dev/null && echo "Image.lz4 copied" || echo "Image.lz4 not found"
+          # Cek isi AnyKernel
+          echo "=== Isi AnyKernel ==="
+          ls -la AnyKernel/
+          # Buat zip
           cd AnyKernel
           zip -r9 ../kernel-rt2800-d2s.zip * -x .git README.md
+          echo "=== Ukuran ZIP ==="
+          ls -lh ../kernel-rt2800-d2s.zip
 
       - name: Upload Result
         uses: actions/upload-artifact@v4
