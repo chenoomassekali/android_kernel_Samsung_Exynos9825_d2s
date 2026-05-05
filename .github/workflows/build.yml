@@ -26,6 +26,12 @@ jobs:
           rm -f kernel/sched/cpufreq_nobody_sched.c 2>/dev/null || true
           sed -i '/cpufreq_nobody_sched/d' kernel/sched/Makefile
 
+      - name: Fix DWC3 Conflict
+        run: |
+          # Fix undefined reference dwc3_thread_interrupt
+          grep -rn "dwc3_thread_interrupt" drivers/usb/dwc3/ 2>/dev/null || true
+          sed -i 's/dwc3_thread_interrupt/dwc3_interrupt/g' drivers/usb/dwc3/gadget.c 2>/dev/null || true
+
       - name: Install Dependencies
         run: |
           sudo apt update
@@ -48,24 +54,19 @@ jobs:
           export ANDROID_MAJOR_VERSION=q
           make exynos9820-d2s_defconfig
           make -j$(nproc) KCFLAGS="-w -Wno-error" 2>&1 || true
-          echo "=== Cek semua file boot ==="
-          find arch/arm64/boot/ -type f 2>/dev/null
-          find . -name "Image" -o -name "Image.gz" -o -name "Image.lz4" 2>/dev/null | grep -v "\.git"
+          echo "=== Cek file Image ==="
+          ls -la arch/arm64/boot/ 2>/dev/null
+          ls -la arch/arm64/boot/Image* 2>/dev/null || echo "TIDAK ADA IMAGE"
 
       - name: Package with AnyKernel3
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel
-          # Copy semua kemungkinan file kernel
-          cp arch/arm64/boot/Image AnyKernel/ 2>/dev/null && echo "Image copied" || echo "Image not found"
-          cp arch/arm64/boot/Image.gz AnyKernel/ 2>/dev/null && echo "Image.gz copied" || echo "Image.gz not found"
-          cp arch/arm64/boot/Image.lz4 AnyKernel/ 2>/dev/null && echo "Image.lz4 copied" || echo "Image.lz4 not found"
-          # Cek isi AnyKernel
-          echo "=== Isi AnyKernel ==="
-          ls -la AnyKernel/
-          # Buat zip
+          cp arch/arm64/boot/Image AnyKernel/ 2>/dev/null && echo "Image OK" || echo "No Image"
+          cp arch/arm64/boot/Image.gz AnyKernel/ 2>/dev/null && echo "Image.gz OK" || echo "No Image.gz"
+          cp arch/arm64/boot/Image.lz4 AnyKernel/ 2>/dev/null && echo "Image.lz4 OK" || echo "No Image.lz4"
+          ls -lh AnyKernel/
           cd AnyKernel
           zip -r9 ../kernel-rt2800-d2s.zip * -x .git README.md
-          echo "=== Ukuran ZIP ==="
           ls -lh ../kernel-rt2800-d2s.zip
 
       - name: Upload Result
