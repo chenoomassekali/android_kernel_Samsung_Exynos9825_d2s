@@ -33,7 +33,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 wget unzip
+          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 wget unzip android-tools-mkbootimg
 
       - name: Download Original boot.img
         run: |
@@ -59,14 +59,7 @@ jobs:
           make -j$(nproc) KCFLAGS="-w -Wno-error" 2>&1 || true
           KERNEL=$(find ./out -name "Image.gz" 2>/dev/null | head -1)
           echo "Kernel: $KERNEL"
-          ls -lh "$KERNEL" 2>/dev/null || echo "Image tidak ditemukan"
-
-      - name: Install mkbootimg tools
-        run: |
-          pip install --break-system-packages setuptools 2>/dev/null || true
-          wget -q https://github.com/osm0sis/mkbootimg/releases/download/v2/mkbootimg -O /usr/local/bin/mkbootimg
-          wget -q https://github.com/osm0sis/mkbootimg/releases/download/v2/unpackbootimg -O /usr/local/bin/unpackbootimg
-          chmod +x /usr/local/bin/mkbootimg /usr/local/bin/unpackbootimg
+          ls -lh "$KERNEL"
 
       - name: Unpack Original boot.img
         run: |
@@ -95,7 +88,6 @@ jobs:
           echo "Kernel: ../$KERNEL"
           echo "Ramdisk: $RAMDISK"
           echo "Base: $BASE | Pagesize: $PAGESIZE"
-          echo "Cmdline: $CMDLINE"
           mkbootimg \
             --kernel "../$KERNEL" \
             --ramdisk "$RAMDISK" \
