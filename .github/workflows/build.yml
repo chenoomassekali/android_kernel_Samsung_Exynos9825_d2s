@@ -7,7 +7,7 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v3
+      - uses: uses: actions/checkout@v4
         with:
           submodules: false
 
@@ -52,7 +52,7 @@ jobs:
           zip -r9 ../kernel-rt2800-d2s.zip * -x .git README.md
 
       - name: Upload Result
-        uses: actions/upload-artifact@v3
+        uses: uses: actions/upload-artifact@v4
         with:
           name: kernel-rt2800-d2s
           path: kernel-rt2800-d2s.zip
