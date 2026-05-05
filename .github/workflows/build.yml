@@ -7,16 +7,14 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     steps:
-      - uses: uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           submodules: false
 
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y gcc-aarch64-linux-gnu \
-          build-essential bc flex bison \
-          libssl-dev libelf-dev python3
+          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3
 
       - name: Add RT2800 Config
         run: |
@@ -46,13 +44,12 @@ jobs:
       - name: Package with AnyKernel3
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel
-          cp arch/arm64/boot/Image.gz AnyKernel/ 2>/dev/null || \
-          cp arch/arm64/boot/Image AnyKernel/ 2>/dev/null
+          cp arch/arm64/boot/Image.gz AnyKernel/ 2>/dev/null || cp arch/arm64/boot/Image AnyKernel/ 2>/dev/null
           cd AnyKernel
           zip -r9 ../kernel-rt2800-d2s.zip * -x .git README.md
 
       - name: Upload Result
-        uses: uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4
         with:
           name: kernel-rt2800-d2s
           path: kernel-rt2800-d2s.zip
