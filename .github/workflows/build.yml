@@ -1,1 +1,58 @@
+name: Build Kernel
 
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: false
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y gcc-aarch64-linux-gnu \
+          build-essential bc flex bison \
+          libssl-dev libelf-dev python3
+
+      - name: Add RT2800 Config
+        run: |
+          echo "CONFIG_WLAN_VENDOR_RALINK=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
+          echo "CONFIG_RT2X00=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
+          echo "CONFIG_RT2X00USB=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
+          echo "CONFIG_RT2800USB=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
+          echo "CONFIG_RT2800USB_RT2770=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
+          echo "CONFIG_RT2800USB_RT3070=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
+          echo "CONFIG_RT2800USB_UNKNOWN=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
+
+      - name: Remove KernelSU
+        run: |
+          sed -i '/kernelsu/Id' drivers/Makefile
+          sed -i '/kernelsu/Id' drivers/Kconfig
+          sed -i '/KernelSU/Id' drivers/Makefile
+          sed -i '/KernelSU/Id' drivers/Kconfig
+
+      - name: Build Kernel
+        run: |
+          export ARCH=arm64
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export ANDROID_MAJOR_VERSION=q
+          make exynos9820-d2s_defconfig
+          make -j$(nproc) KCFLAGS="-w"
+
+      - name: Package with AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel
+          cp arch/arm64/boot/Image.gz AnyKernel/ 2>/dev/null || \
+          cp arch/arm64/boot/Image AnyKernel/ 2>/dev/null
+          cd AnyKernel
+          zip -r9 ../kernel-rt2800-d2s.zip * -x .git README.md
+
+      - name: Upload Result
+        uses: actions/upload-artifact@v3
+        with:
+          name: kernel-rt2800-d2s
+          path: kernel-rt2800-d2s.zip
