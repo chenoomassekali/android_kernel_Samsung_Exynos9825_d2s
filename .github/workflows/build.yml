@@ -50,37 +50,41 @@ jobs:
           echo "CONFIG_RT2800USB_RT3070=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
           echo "CONFIG_RT2800USB_UNKNOWN=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
 
-      - name: Build Kernel with DTB
+      - name: Build Kernel with DTB (Exynos 9825)
         id: build
         run: |
           export ARCH=arm64
           export CROSS_COMPILE=aarch64-linux-gnu-
           export ANDROID_MAJOR_VERSION=q
           make exynos9820-d2s_defconfig
-          make -j$(nproc) Image.gz dtbs KCFLAGS="-w -Wno-error"
 
-          # Cari file DTB untuk d2s
-          DTB_FILE=$(find arch/arm64/boot/dts -name "*exynos9820*d2s*.dtb" 2>/dev/null | head -1)
+          # Build kernel Image (mentah) dan Device Tree Blobs (DTB)
+          make -j$(nproc) Image dtbs KCFLAGS="-w -Wno-error"
+
+          # Cari file DTB yang cocok untuk d2s (exynos9825)
+          DTB_FILE=$(find arch/arm64/boot/dts -name "*exynos9825*d2s*.dtb" 2>/dev/null | head -1)
           if [ -z "$DTB_FILE" ]; then
-            # fallback: cari semua dtb dan ambil yang mengandung "d2s"
-            DTB_FILE=$(find arch/arm64/boot/dts -name "*.dtb" | xargs -I{} basename {} | grep -i d2s | head -1)
-            if [ -n "$DTB_FILE" ]; then
-              DTB_FILE=$(find arch/arm64/boot/dts -name "$DTB_FILE")
-            fi
+            # Fallback: cari semua dtb dan ambil yang mengandung "exynos9825"
+            DTB_FILE=$(find arch/arm64/boot/dts -name "*exynos9825*.dtb" 2>/dev/null | head -1)
+          fi
+          if [ -z "$DTB_FILE" ]; then
+            # Fallback terakhir: cari dtb yang mengandung "d2s"
+            DTB_FILE=$(find arch/arm64/boot/dts -name "*d2s*.dtb" 2>/dev/null | head -1)
           fi
 
           if [ -z "$DTB_FILE" ]; then
-            echo "ERROR: DTB for d2s not found!"
-            find arch/arm64/boot/dts -name "*.dtb" || true
+            echo "ERROR: DTB untuk Exynos 9825 (d2s) tidak ditemukan!"
+            echo "Daftar file .dtb yang tersedia:"
+            find arch/arm64/boot/dts -name "*.dtb" 2>/dev/null || echo "Tidak ada file .dtb ditemukan."
             exit 1
           fi
 
-          echo "DTB found: $DTB_FILE"
+          echo "DTB ditemukan: $DTB_FILE"
           ls -lh "$DTB_FILE"
 
-          # Gabungkan Image.gz + DTB
-          cat arch/arm64/boot/Image.gz "$DTB_FILE" > arch/arm64/boot/Image.gz-dtb
-          KERNEL=arch/arm64/boot/Image.gz-dtb
+          # Gabungkan Image (mentah) + DTB
+          cat arch/arm64/boot/Image "$DTB_FILE" > arch/arm64/boot/Image-dtb
+          KERNEL=arch/arm64/boot/Image-dtb
           ls -lh "$KERNEL"
           echo "kernel_path=$KERNEL" >> $GITHUB_OUTPUT
 
@@ -131,7 +135,7 @@ jobs:
           ramdisk_data = boot[off_ramdisk : off_ramdisk + ramdisk_size]
           second_data  = boot[off_second  : off_second  + second_size] if second_size else b''
 
-          # Kernel baru (Image.gz-dtb)
+          # Kernel baru (Image-dtb)
           kernel_path = os.environ.get('KERNEL_PATH', '')
           assert kernel_path and os.path.exists(kernel_path), f"Kernel not found: {kernel_path}"
           kernel_data = read_file(kernel_path)
