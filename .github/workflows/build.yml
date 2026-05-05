@@ -34,13 +34,12 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 python3-pip wget unzip
-          pip3 install mkbootimg 2>/dev/null || pip install mkbootimg 2>/dev/null || true
-          git clone --depth=1 https://github.com/osm0sis/mkbootimg tools-mkbootimg
-          sudo cp tools-mkbootimg/mkbootimg /usr/local/bin/
-          sudo cp tools-mkbootimg/unpackbootimg /usr/local/bin/ 2>/dev/null || true
-          sudo chmod +x /usr/local/bin/mkbootimg /usr/local/bin/unpackbootimg 2>/dev/null || true
-          mkbootimg --version 2>/dev/null || echo "mkbootimg ready"
-          unpackbootimg --version 2>/dev/null || echo "unpackbootimg ready"
+          # Clone AOSP mkbootimg tools
+          git clone --depth=1 https://android.googlesource.com/platform/system/tools/mkbootimg mkbootimg-tools
+          sudo cp mkbootimg-tools/mkbootimg.py /usr/local/bin/mkbootimg
+          sudo cp mkbootimg-tools/unpack_bootimg.py /usr/local/bin/unpackbootimg
+          sudo chmod +x /usr/local/bin/mkbootimg /usr/local/bin/unpackbootimg
+          echo "mkbootimg installed!"
 
       - name: Download Original boot.img
         run: |
@@ -71,33 +70,26 @@ jobs:
       - name: Unpack Original boot.img
         run: |
           mkdir -p bootimg-out
-          cd bootimg-out
-          unpackbootimg -i ../original-boot.img
-          ls -la
-          echo "=== CMDLINE ===" && cat *cmdline* 2>/dev/null || true
-          echo "=== BASE ===" && cat *base* 2>/dev/null || true
-          echo "=== PAGESIZE ===" && cat *pagesize* 2>/dev/null || true
+          unpackbootimg --boot_img original-boot.img --out bootimg-out
+          ls -la bootimg-out/
+          echo "=== INFO ===" && cat bootimg-out/kernel_cmdline 2>/dev/null || true
 
       - name: Create New boot.img
         run: |
           KERNEL=$(find ./out -name "Image.gz" 2>/dev/null | head -1)
           cd bootimg-out
-          CMDLINE=$(cat *cmdline* 2>/dev/null || echo "")
-          BASE=$(cat *base* 2>/dev/null || echo "0x10000000")
-          PAGESIZE=$(cat *pagesize* 2>/dev/null || echo "2048")
-          KERNEL_OFFSET=$(cat *kernel_offset* 2>/dev/null || echo "0x00008000")
-          RAMDISK_OFFSET=$(cat *ramdisk_offset* 2>/dev/null || echo "0x01000000")
-          TAGS_OFFSET=$(cat *tags_offset* 2>/dev/null || echo "0x00000100")
-          RAMDISK=$(ls *ramdisk* 2>/dev/null | head -1)
-          echo "Kernel: ../$KERNEL | Ramdisk: $RAMDISK"
+          CMDLINE=$(cat kernel_cmdline 2>/dev/null || echo "")
+          echo "Kernel: ../$KERNEL"
+          echo "Cmdline: $CMDLINE"
           mkbootimg \
             --kernel "../$KERNEL" \
-            --ramdisk "$RAMDISK" \
-            --base "$BASE" \
-            --pagesize "$PAGESIZE" \
-            --kernel_offset "$KERNEL_OFFSET" \
-            --ramdisk_offset "$RAMDISK_OFFSET" \
-            --tags_offset "$TAGS_OFFSET" \
+            --ramdisk ramdisk 2>/dev/null || \
+          mkbootimg \
+            --kernel "../$KERNEL" \
+            --ramdisk ramdisk.lz4 2>/dev/null || \
+          mkbootimg \
+            --kernel "../$KERNEL" \
+            --ramdisk ramdisk.gz \
             --cmdline "$CMDLINE" \
             -o ../boot-rt2800-d2s.img
           ls -lh ../boot-rt2800-d2s.img
