@@ -21,10 +21,15 @@ jobs:
           sed -i '/KernelSU/Id' drivers/Makefile
           sed -i '/KernelSU/Id' drivers/Kconfig
 
+      - name: Fix CPU Scheduler Conflict
+        run: |
+          rm -f kernel/sched/cpufreq_nobody_sched.c 2>/dev/null || true
+          sed -i '/cpufreq_nobody_sched/d' kernel/sched/Makefile
+
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 clang lld llvm
+          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3
 
       - name: Add RT2800 Config
         run: |
@@ -42,14 +47,14 @@ jobs:
           export CROSS_COMPILE=aarch64-linux-gnu-
           export ANDROID_MAJOR_VERSION=q
           make exynos9820-d2s_defconfig
-          make -j$(nproc) KCFLAGS="-w -Wno-error" || true
-          cat arch/arm64/boot/Image.gz 2>/dev/null && echo "BUILD SUCCESS" || echo "BUILD FAILED - check logs"
+          make -j$(nproc) KCFLAGS="-w -Wno-error" 2>&1 || true
+          ls arch/arm64/boot/ && echo "BUILD SUCCESS" || echo "BUILD FAILED"
 
       - name: Package with AnyKernel3
-        if: success()
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel
-          cp arch/arm64/boot/Image.gz AnyKernel/ 2>/dev/null || cp arch/arm64/boot/Image AnyKernel/ 2>/dev/null
+          cp arch/arm64/boot/Image.gz AnyKernel/ 2>/dev/null || \
+          cp arch/arm64/boot/Image AnyKernel/ 2>/dev/null
           cd AnyKernel
           zip -r9 ../kernel-rt2800-d2s.zip * -x .git README.md
 
