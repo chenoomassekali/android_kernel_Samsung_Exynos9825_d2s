@@ -49,6 +49,7 @@ jobs:
           echo "CONFIG_RT2800USB_RT2770=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
           echo "CONFIG_RT2800USB_RT3070=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
           echo "CONFIG_RT2800USB_UNKNOWN=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
+          sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/CONFIG_CC_STACKPROTECTOR_NONE=y/' arch/arm64/configs/exynos9820-d2s_defconfig
 
       - name: Build Kernel with Clang
         id: build
@@ -65,6 +66,8 @@ jobs:
           export STRIP=llvm-strip
           export ANDROID_MAJOR_VERSION=q
           make exynos9820-d2s_defconfig
+          scripts/config --disable CONFIG_CC_STACKPROTECTOR_STRONG
+          scripts/config --enable CONFIG_CC_STACKPROTECTOR_NONE
           make -j$(nproc) KCFLAGS="-w -Wno-error" 2>&1 || true
           KERNEL=$(find . -name "Image.gz" | grep -v ".git" | head -1)
           echo "Kernel: $KERNEL"
@@ -106,6 +109,9 @@ jobs:
           print(f"page_size    = {page_size}")
           print(f"kernel_size  = {kernel_size}")
           print(f"ramdisk_size = {ramdisk_size}")
+          print(f"kernel_addr  = 0x{kernel_addr:08x}")
+          print(f"ramdisk_addr = 0x{ramdisk_addr:08x}")
+          print(f"tags_addr    = 0x{tags_addr:08x}")
 
           def ceil_page(n, ps):
               return ((n + ps - 1) // ps) * ps
