@@ -33,7 +33,12 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3
+          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 wget unzip
+
+      - name: Download Original boot.img
+        run: |
+          wget -q https://github.com/pho5nix/d2s-los23-nethunter-kernel/releases/download/v1.0/d2s-nh-boot.img -O original-boot.img
+          ls -lh original-boot.img
 
       - name: Add RT2800 Config
         run: |
@@ -52,26 +57,59 @@ jobs:
           export ANDROID_MAJOR_VERSION=q
           make exynos9820-d2s_defconfig
           make -j$(nproc) KCFLAGS="-w -Wno-error" 2>&1 || true
-          echo "=== Cari semua file Image ==="
-          find . -name "Image" -o -name "Image.gz" -o -name "Image.lz4" 2>/dev/null | grep -v "\.git" | grep -v "source"
+          KERNEL=$(find ./out -name "Image.gz" 2>/dev/null | head -1)
+          echo "Kernel: $KERNEL"
+          ls -lh "$KERNEL" 2>/dev/null || echo "Image tidak ditemukan"
 
-      - name: Package with AnyKernel3
+      - name: Install mkbootimg tools
         run: |
-          git clone --depth=1 https://github.com/osm0sis/AnyKernel3 AnyKernel
-          # Cari dan copy file Image dari mana saja
-          IMAGE=$(find . -name "Image.gz" ! -path "./.git/*" ! -path "./AnyKernel/*" | head -1)
-          if [ -z "$IMAGE" ]; then
-            IMAGE=$(find . -name "Image" ! -path "./.git/*" ! -path "./AnyKernel/*" | head -1)
-          fi
-          echo "Image ditemukan di: $IMAGE"
-          cp "$IMAGE" AnyKernel/ 2>/dev/null || echo "Copy gagal"
-          ls -lh AnyKernel/
-          cd AnyKernel
-          zip -r9 ../kernel-rt2800-d2s.zip * -x .git README.md
-          ls -lh ../kernel-rt2800-d2s.zip
+          pip install --break-system-packages setuptools 2>/dev/null || true
+          wget -q https://github.com/osm0sis/mkbootimg/releases/download/v2/mkbootimg -O /usr/local/bin/mkbootimg
+          wget -q https://github.com/osm0sis/mkbootimg/releases/download/v2/unpackbootimg -O /usr/local/bin/unpackbootimg
+          chmod +x /usr/local/bin/mkbootimg /usr/local/bin/unpackbootimg
 
-      - name: Upload Result
+      - name: Unpack Original boot.img
+        run: |
+          mkdir -p bootimg-out
+          cd bootimg-out
+          unpackbootimg -i ../original-boot.img
+          ls -la
+          echo "=== CMDLINE ==="
+          cat *cmdline* 2>/dev/null || true
+          echo "=== BASE ==="
+          cat *base* 2>/dev/null || true
+          echo "=== PAGESIZE ==="
+          cat *pagesize* 2>/dev/null || true
+
+      - name: Create New boot.img
+        run: |
+          KERNEL=$(find ./out -name "Image.gz" 2>/dev/null | head -1)
+          cd bootimg-out
+          CMDLINE=$(cat *cmdline* 2>/dev/null || echo "")
+          BASE=$(cat *base* 2>/dev/null || echo "0x10000000")
+          PAGESIZE=$(cat *pagesize* 2>/dev/null || echo "2048")
+          KERNEL_OFFSET=$(cat *kernel_offset* 2>/dev/null || echo "0x00008000")
+          RAMDISK_OFFSET=$(cat *ramdisk_offset* 2>/dev/null || echo "0x01000000")
+          TAGS_OFFSET=$(cat *tags_offset* 2>/dev/null || echo "0x00000100")
+          RAMDISK=$(ls *ramdisk* 2>/dev/null | head -1)
+          echo "Kernel: ../$KERNEL"
+          echo "Ramdisk: $RAMDISK"
+          echo "Base: $BASE | Pagesize: $PAGESIZE"
+          echo "Cmdline: $CMDLINE"
+          mkbootimg \
+            --kernel "../$KERNEL" \
+            --ramdisk "$RAMDISK" \
+            --base "$BASE" \
+            --pagesize "$PAGESIZE" \
+            --kernel_offset "$KERNEL_OFFSET" \
+            --ramdisk_offset "$RAMDISK_OFFSET" \
+            --tags_offset "$TAGS_OFFSET" \
+            --cmdline "$CMDLINE" \
+            -o ../boot-rt2800-d2s.img
+          ls -lh ../boot-rt2800-d2s.img
+
+      - name: Upload boot.img
         uses: actions/upload-artifact@v4
         with:
-          name: kernel-rt2800-d2s
-          path: kernel-rt2800-d2s.zip
+          name: boot-rt2800-d2s
+          path: boot-rt2800-d2s.img
