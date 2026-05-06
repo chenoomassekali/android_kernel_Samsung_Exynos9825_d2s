@@ -34,13 +34,10 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 python3-pip wget clang lld llvm binutils-aarch64-linux-gnu abootimg
-          # Install mkbootimg dari AOSP
-          git clone --depth=1 https://android.googlesource.com/platform/system/tools/mkbootimg mkbootimg-src 2>/dev/null || \
-          git clone --depth=1 https://github.com/osm0sis/mkbootimg mkbootimg-src
-          sudo cp mkbootimg-src/mkbootimg.py /usr/local/bin/mkbootimg 2>/dev/null || \
-          sudo cp mkbootimg-src/mkbootimg /usr/local/bin/mkbootimg 2>/dev/null || true
-          sudo chmod +x /usr/local/bin/mkbootimg
-          mkbootimg --version || echo "mkbootimg installed"
+          # Install mkbootimg versi lama tanpa dependency gki
+          wget -q https://raw.githubusercontent.com/osm0sis/mkbootimg/master/mkbootimg -O /usr/local/bin/mkbootimg
+          chmod +x /usr/local/bin/mkbootimg
+          mkbootimg --help 2>/dev/null || echo "mkbootimg installed"
 
       - name: Download Nethunter boot.img
         run: |
