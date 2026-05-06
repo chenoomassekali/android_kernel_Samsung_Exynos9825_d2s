@@ -33,11 +33,7 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 python3-pip wget clang lld llvm binutils-aarch64-linux-gnu abootimg
-          # Install mkbootimg versi lama tanpa dependency gki
-          wget -q https://raw.githubusercontent.com/osm0sis/mkbootimg/master/mkbootimg -O /usr/local/bin/mkbootimg
-          chmod +x /usr/local/bin/mkbootimg
-          mkbootimg --help 2>/dev/null || echo "mkbootimg installed"
+          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 wget clang lld llvm binutils-aarch64-linux-gnu
 
       - name: Download Nethunter boot.img
         run: |
@@ -74,36 +70,119 @@ jobs:
           make O=out exynos9820-d2s_defconfig
           make O=out -j$(nproc) KCFLAGS="-w -Wno-error" 2>&1 || true
           KERNEL=$(find out -name "Image" | grep -v "Image.gz" | head -1)
+          if [ -z "$KERNEL" ]; then
+            KERNEL=$(find out -name "Image.gz" | head -1)
+          fi
           echo "Kernel: $KERNEL"
           ls -lh "$KERNEL"
           echo "kernel_path=$KERNEL" >> $GITHUB_OUTPUT
 
-      - name: Extract Ramdisk from Nethunter boot.img
+      - name: Unpack and Repack boot.img (Pure Python)
         run: |
-          mkdir -p work
-          cd work
-          abootimg -x ../nethunter-boot.img
-          ls -lh
-          cd ..
+          python3 << 'EOF'
+          import struct, os
 
-      - name: Pack boot.img with mkbootimg
+          def read_file(path):
+              with open(path, 'rb') as f:
+                  return f.read()
+
+          def write_file(path, data):
+              with open(path, 'wb') as f:
+                  f.write(data)
+
+          def align(data, pagesize):
+              r = len(data) % pagesize
+              if r == 0:
+                  return data
+              return data + b'\x00' * (pagesize - r)
+
+          boot = read_file('nethunter-boot.img')
+          assert boot[:8] == b'ANDROID!', "Not an Android boot image!"
+
+          (kernel_size, kernel_addr,
+           ramdisk_size, ramdisk_addr,
+           second_size, second_addr,
+           tags_addr, page_size) = struct.unpack_from('<8I', boot, 8)
+
+          os_version_patch = struct.unpack_from('<I', boot, 40)[0]
+          name    = boot[48:64]
+          cmdline = boot[64:576]
+          id_data = boot[576:608]
+
+          print(f"page_size    = {page_size}")
+          print(f"kernel_size  = {kernel_size}")
+          print(f"ramdisk_size = {ramdisk_size}")
+          print(f"kernel_addr  = 0x{kernel_addr:08x}")
+          print(f"ramdisk_addr = 0x{ramdisk_addr:08x}")
+          print(f"tags_addr    = 0x{tags_addr:08x}")
+
+          def ceil_page(n, ps):
+              return ((n + ps - 1) // ps) * ps
+
+          off_kernel  = page_size
+          off_ramdisk = off_kernel  + ceil_page(kernel_size,  page_size)
+          off_second  = off_ramdisk + ceil_page(ramdisk_size, page_size)
+
+          ramdisk_data = boot[off_ramdisk : off_ramdisk + ramdisk_size]
+          second_data  = boot[off_second  : off_second  + second_size] if second_size else b''
+
+          print(f"Extracted ramdisk: {len(ramdisk_data)} bytes")
+
+          kernel_path = os.environ.get('KERNEL_PATH', '')
+          assert kernel_path and os.path.exists(kernel_path), f"Kernel not found: {kernel_path}"
+          kernel_data = read_file(kernel_path)
+          print(f"New kernel: {len(kernel_data)} bytes")
+
+          # Pakai header version 1 seperti pho5nix
+          # os_version = 16.0.0 -> encoded
+          def encode_os_version(ver_str, patch_str):
+              a, b, c = map(int, ver_str.split('.'))
+              ver = ((a & 0x7f) << 25) | ((b & 0x7f) << 18) | ((c & 0x7f) << 11)
+              y, m = map(int, patch_str.split('-'))
+              patch = ((y - 2000) << 4) | m
+              return (ver | patch)
+
+          os_ver = encode_os_version("16.0.0", "2026-03")
+
+          hdr  = b'ANDROID!'
+          hdr += struct.pack('<8I',
+                             len(kernel_data),  kernel_addr,
+                             len(ramdisk_data), ramdisk_addr,
+                             len(second_data),  second_addr,
+                             tags_addr,         page_size)
+          hdr += struct.pack('<I', os_ver)
+          hdr += struct.pack('<I', 1)  # header version 1
+          hdr += name
+          hdr += cmdline
+          hdr += id_data
+          pad_len = page_size - (len(hdr) % page_size)
+          if pad_len != page_size:
+              hdr += b'\x00' * pad_len
+
+          output  = hdr
+          output += align(kernel_data,  page_size)
+          output += align(ramdisk_data, page_size)
+          if second_data:
+              output += align(second_data, page_size)
+
+          write_file('boot-rt2800-d2s.img', output)
+          print(f"boot.img written: {len(output)} bytes")
+          EOF
+
+        env:
+          KERNEL_PATH: ${{ steps.build.outputs.kernel_path }}
+
+      - name: Verify boot.img
         run: |
-          mkbootimg \
-            --header_version 1 \
-            --os_version 16.0.0 \
-            --os_patch_level 2026-03 \
-            --kernel ${{ steps.build.outputs.kernel_path }} \
-            --ramdisk work/initrd.img \
-            --pagesize 0x00000800 \
-            --base 0x00000000 \
-            --kernel_offset 0x10008000 \
-            --ramdisk_offset 0x11000000 \
-            --second_offset 0x00000000 \
-            --tags_offset 0x10000100 \
-            --board '' \
-            --cmdline ' androidboot.super_partition=system' \
-            -o boot-rt2800-d2s.img
           ls -lh boot-rt2800-d2s.img
+          python3 -c "
+          import struct
+          with open('boot-rt2800-d2s.img','rb') as f: h=f.read(64)
+          assert h[:8]==b'ANDROID!', 'Bad magic!'
+          ks,ka,rs,ra,ss,sa,ta,ps = struct.unpack_from('<8I',h,8)
+          print(f'kernel_size={ks}, ramdisk_size={rs}, page_size={ps}')
+          print('boot.img looks valid!')
+          "
 
       - name: Upload boot.img
         uses: actions/upload-artifact@v4
