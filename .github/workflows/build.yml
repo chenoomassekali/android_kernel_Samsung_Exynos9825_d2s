@@ -33,8 +33,14 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 wget clang lld llvm binutils-aarch64-linux-gnu abootimg
-          pip install mkbootimg --user
+          sudo apt install -y gcc-aarch64-linux-gnu build-essential bc flex bison libssl-dev libelf-dev python3 python3-pip wget clang lld llvm binutils-aarch64-linux-gnu abootimg
+          # Install mkbootimg dari AOSP
+          git clone --depth=1 https://android.googlesource.com/platform/system/tools/mkbootimg mkbootimg-src 2>/dev/null || \
+          git clone --depth=1 https://github.com/osm0sis/mkbootimg mkbootimg-src
+          sudo cp mkbootimg-src/mkbootimg.py /usr/local/bin/mkbootimg 2>/dev/null || \
+          sudo cp mkbootimg-src/mkbootimg /usr/local/bin/mkbootimg 2>/dev/null || true
+          sudo chmod +x /usr/local/bin/mkbootimg
+          mkbootimg --version || echo "mkbootimg installed"
 
       - name: Download Nethunter boot.img
         run: |
@@ -70,7 +76,7 @@ jobs:
           mkdir -p out
           make O=out exynos9820-d2s_defconfig
           make O=out -j$(nproc) KCFLAGS="-w -Wno-error" 2>&1 || true
-          KERNEL=$(find out -name "Image" | head -1)
+          KERNEL=$(find out -name "Image" | grep -v "Image.gz" | head -1)
           echo "Kernel: $KERNEL"
           ls -lh "$KERNEL"
           echo "kernel_path=$KERNEL" >> $GITHUB_OUTPUT
@@ -85,7 +91,7 @@ jobs:
 
       - name: Pack boot.img with mkbootimg
         run: |
-          ~/.local/bin/mkbootimg \
+          mkbootimg \
             --header_version 1 \
             --os_version 16.0.0 \
             --os_patch_level 2026-03 \
