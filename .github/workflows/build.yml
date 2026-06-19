@@ -51,37 +51,18 @@ jobs:
           echo "CONFIG_RT2800USB_UNKNOWN=y" >> arch/arm64/configs/exynos9820-d2s_defconfig
           sed -i 's/CONFIG_CC_STACKPROTECTOR_STRONG=y/CONFIG_CC_STACKPROTECTOR_NONE=y/' arch/arm64/configs/exynos9820-d2s_defconfig
 
-      - name: Apply WiFi Signal Boost Patches
+      - name: Apply WiFi Signal Boost Patches (Safe Subset)
         run: |
           DEFCONFIG=arch/arm64/configs/exynos9820-d2s_defconfig
 
           sed -i 's/CONFIG_CFG80211_DEFAULT_PS=y/# CONFIG_CFG80211_DEFAULT_PS is not set/' $DEFCONFIG
           sed -i 's/# CONFIG_MAC80211_RC_MINSTREL_VHT is not set/CONFIG_MAC80211_RC_MINSTREL_VHT=y/' $DEFCONFIG
-          sed -i 's/# CONFIG_WLAN_BCM4375_ENHANCED_FEATURES is not set/CONFIG_WLAN_BCM4375_ENHANCED_FEATURES=y/' $DEFCONFIG
-          sed -i 's/# CONFIG_WLAN_BCM4375_ADVANCED_FEATURES is not set/CONFIG_WLAN_BCM4375_ADVANCED_FEATURES=y/' $DEFCONFIG
           sed -i 's/# CONFIG_BCMDHD_PREALLOC_PKTIDMAP is not set/CONFIG_BCMDHD_PREALLOC_PKTIDMAP=y/' $DEFCONFIG
           sed -i 's/# CONFIG_WLAN_TSQ_MULTIPLIER is not set/CONFIG_WLAN_TSQ_MULTIPLIER=y/' $DEFCONFIG
           sed -i 's/# CONFIG_WLAN_ANQP_RMAC_BACKPORTED is not set/CONFIG_WLAN_ANQP_RMAC_BACKPORTED=y/' $DEFCONFIG
 
-          echo "=== WiFi Patch Verification ==="
+          echo "=== WiFi Patch Verification (BCM4375 ENHANCED/ADVANCED EXCLUDED) ==="
           grep -E "CFG80211_DEFAULT_PS|MINSTREL_VHT|BCM4375|PKTIDMAP|TSQ|ANQP" $DEFCONFIG
-
-      - name: Debug Toolchain Versions
-        run: |
-          echo "=== Clang ==="
-          which clang
-          clang --version
-          echo ""
-          echo "=== GCC Cross ==="
-          which aarch64-linux-gnu-gcc
-          aarch64-linux-gnu-gcc --version
-          echo ""
-          echo "=== LLD ==="
-          which ld.lld
-          ld.lld --version
-          echo ""
-          echo "=== Kernel Makefile cek CLANG flag ==="
-          grep -n "mllvm\|polly" Makefile arch/arm64/Makefile 2>/dev/null | head -30
 
       - name: Build Kernel with Clang
         id: build
@@ -144,9 +125,6 @@ jobs:
           print(f"page_size    = {page_size}")
           print(f"kernel_size  = {kernel_size}")
           print(f"ramdisk_size = {ramdisk_size}")
-          print(f"kernel_addr  = 0x{kernel_addr:08x}")
-          print(f"ramdisk_addr = 0x{ramdisk_addr:08x}")
-          print(f"tags_addr    = 0x{tags_addr:08x}")
 
           def ceil_page(n, ps):
               return ((n + ps - 1) // ps) * ps
@@ -157,8 +135,6 @@ jobs:
 
           ramdisk_data = boot[off_ramdisk : off_ramdisk + ramdisk_size]
           second_data  = boot[off_second  : off_second  + second_size] if second_size else b''
-
-          print(f"Extracted ramdisk: {len(ramdisk_data)} bytes")
 
           kernel_path = os.environ.get('KERNEL_PATH', '')
           assert kernel_path and os.path.exists(kernel_path), f"Kernel not found: {kernel_path}"
@@ -195,19 +171,18 @@ jobs:
           if second_data:
               output += align(second_data, page_size)
 
-          write_file('boot-wifi-boost-d2s.img', output)
+          write_file('boot-wifi-boost-v2-d2s.img', output)
           print(f"boot.img written: {len(output)} bytes")
           EOF
-
         env:
           KERNEL_PATH: ${{ steps.build.outputs.kernel_path }}
 
       - name: Verify boot.img
         run: |
-          ls -lh boot-wifi-boost-d2s.img
+          ls -lh boot-wifi-boost-v2-d2s.img
           python3 -c "
           import struct
-          with open('boot-wifi-boost-d2s.img','rb') as f: h=f.read(64)
+          with open('boot-wifi-boost-v2-d2s.img','rb') as f: h=f.read(64)
           assert h[:8]==b'ANDROID!', 'Bad magic!'
           ks,ka,rs,ra,ss,sa,ta,ps = struct.unpack_from('<8I',h,8)
           print(f'kernel_size={ks}, ramdisk_size={rs}, page_size={ps}')
@@ -217,5 +192,5 @@ jobs:
       - name: Upload boot.img
         uses: actions/upload-artifact@v4
         with:
-          name: boot-wifi-boost-d2s
-          path: boot-wifi-boost-d2s.img
+          name: boot-wifi-boost-v2-d2s
+          path: boot-wifi-boost-v2-d2s.img
